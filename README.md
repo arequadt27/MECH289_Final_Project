@@ -28,8 +28,8 @@ Stress classification using the WESAD dataset and Empatica E4 wrist wearable sig
 
 | Stratum | LR F1 | RF F1 | XGBoost F1 |
 |---|---|---|---|
-| Low motion | 0.823 | 0.842 | 0.859 |
-| High motion | 0.854 | 0.797 | 0.798 |
+| Low motion | 0.823 | 0.842 | 0.852 |
+| High motion | 0.854 | 0.797 | 0.814 |
 
 LR is uniquely stable across motion conditions; XGBoost is strongest in low-motion windows.
 
@@ -101,7 +101,7 @@ python model_comparison.py
 
 Runs LOSO cross-validation across all 15 subjects. LR uses inner 3-fold grid search over C. RF uses Optuna TPE search (50 trials). XGBoost uses Optuna TPE search (150 trials) over 9 hyperparameters: `n_estimators`, `learning_rate`, `max_depth`, `min_child_weight`, `subsample`, `colsample_bytree`, `gamma`, `reg_alpha`, `reg_lambda`. StandardScaler is fit on training folds only (no data leakage). Results are reported both including and excluding S14.
 
-**Expected runtime: ~60–90 minutes** Can however be much faster (only took me 24 minutes).
+**Expected runtime: ~60–90 minutes**
 
 **Outputs:**
 | File | Description |
