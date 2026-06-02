@@ -14,7 +14,7 @@ Additionally:
 Install:
     pip install scikit-learn xgboost optuna shap
 
-Expected runtime: ~20-40 min on a modern CPU.
+Expected runtime: ~60-90 min on a modern CPU (XGBoost uses 150 Optuna trials).
 """
 
 import os
@@ -53,10 +53,11 @@ optuna.logging.set_verbosity(optuna.logging.WARNING)
 
 # CONFIGURATION
 DATA_ROOT       = os.path.dirname(os.path.abspath(__file__))  # project folder
-RANDOM_SEED     = 42
-INNER_CV_FOLDS  = 3
-N_OPTUNA_TRIALS = 50
-C_GRID          = [0.001, 0.01, 0.1, 1.0, 10.0, 100.0]
+RANDOM_SEED          = 42
+INNER_CV_FOLDS       = 3
+N_OPTUNA_TRIALS_RF   = 50
+N_OPTUNA_TRIALS_XGB  = 150
+C_GRID               = [0.001, 0.01, 0.1, 1.0, 10.0, 100.0]
 
 
 # LOAD DATA
@@ -81,7 +82,7 @@ print(f'  Windows     : {len(df)}')
 print(f'  Features    : {len(feat_cols)}')
 print(f'  Subjects    : {n_subjects}')
 print(f'  Classes     : {label_cts}  (0=non-stress, 1=stress)')
-print(f'  Optuna trials per fold: {N_OPTUNA_TRIALS}')
+print(f'  Optuna trials per fold: RF={N_OPTUNA_TRIALS_RF}, XGBoost={N_OPTUNA_TRIALS_XGB}')
 print(f'  Expected runtime: 20-40 min\n')
 
 
@@ -111,7 +112,8 @@ def train_lr(X_tr, y_tr, X_te, y_te, inner_cv):
     gs.fit(X_tr, y_tr)
     y_pred = gs.predict(X_te)
     y_prob = gs.predict_proba(X_te)[:, 1]
-    return compute_metrics(y_te, y_pred, y_prob), {'C': gs.best_params_['C']}, y_pred, y_prob
+    coef   = gs.best_estimator_.coef_[0]
+    return compute_metrics(y_te, y_pred, y_prob), {'C': gs.best_params_['C']}, y_pred, y_prob, coef
 
 
 def train_rf(X_tr, y_tr, X_te, y_te, inner_cv):
@@ -128,7 +130,7 @@ def train_rf(X_tr, y_tr, X_te, y_te, inner_cv):
 
     study = optuna.create_study(direction='maximize',
                                 sampler=optuna.samplers.TPESampler(seed=RANDOM_SEED))
-    study.optimize(objective, n_trials=N_OPTUNA_TRIALS, show_progress_bar=False)
+    study.optimize(objective, n_trials=N_OPTUNA_TRIALS_RF, show_progress_bar=False)
 
     best = study.best_params
     clf  = RandomForestClassifier(**best, class_weight='balanced',
@@ -146,12 +148,15 @@ def train_xgb(X_tr, y_tr, X_te, y_te, inner_cv, scale_pos_weight):
     """
     def objective(trial):
         params = dict(
-            n_estimators     = trial.suggest_int('n_estimators', 50, 500),
-            learning_rate    = trial.suggest_float('learning_rate', 0.01, 0.3, log=True),
-            max_depth        = trial.suggest_int('max_depth', 3, 10),
+            n_estimators     = trial.suggest_int('n_estimators', 50, 600),
+            learning_rate    = trial.suggest_float('learning_rate', 0.005, 0.3, log=True),
+            max_depth        = trial.suggest_int('max_depth', 3, 12),
             min_child_weight = trial.suggest_int('min_child_weight', 1, 10),
             subsample        = trial.suggest_float('subsample', 0.5, 1.0),
-            colsample_bytree = trial.suggest_float('colsample_bytree', 0.5, 1.0),
+            colsample_bytree = trial.suggest_float('colsample_bytree', 0.4, 1.0),
+            gamma            = trial.suggest_float('gamma', 0.0, 5.0),
+            reg_alpha        = trial.suggest_float('reg_alpha', 0.0, 5.0),
+            reg_lambda       = trial.suggest_float('reg_lambda', 0.5, 5.0),
         )
         clf = XGBClassifier(**params, scale_pos_weight=scale_pos_weight,
                             eval_metric='logloss', verbosity=0,
@@ -161,7 +166,7 @@ def train_xgb(X_tr, y_tr, X_te, y_te, inner_cv, scale_pos_weight):
 
     study = optuna.create_study(direction='maximize',
                                 sampler=optuna.samplers.TPESampler(seed=RANDOM_SEED))
-    study.optimize(objective, n_trials=N_OPTUNA_TRIALS, show_progress_bar=False)
+    study.optimize(objective, n_trials=N_OPTUNA_TRIALS_XGB, show_progress_bar=False)
 
     best = study.best_params
     clf  = XGBClassifier(**best, scale_pos_weight=scale_pos_weight,
@@ -189,6 +194,7 @@ for pfx in ['lr', 'rf', 'xgb']:
 # SHAP accumulators: one (n_test × n_feat) array per fold
 shap_values_list = []   # SHAP values computed on scaled test features
 shap_X_list      = []   # original unscaled test features (for color axis)
+all_lr_coefs     = []   # LR coefficients per fold (n_folds × n_features)
 
 records = []
 wall_t0 = time.time()
@@ -233,7 +239,11 @@ for fold_idx, (train_idx, test_idx) in enumerate(logo.split(X, y, groups), 1):
             if isinstance(sv, list):
                 sv = sv[1]
             shap_values_list.append(sv)
-            shap_X_list.append(X[test_idx])  
+            shap_X_list.append(X[test_idx])
+        elif model_name == 'LR':
+            m, bp, y_pred_fold, y_prob_fold, lr_coef = train_fn(
+                X_tr_sc, y_tr, X_te_sc, y_te, inner_cv, **kwargs)
+            all_lr_coefs.append(lr_coef)
         else:
             m, bp, y_pred_fold, y_prob_fold = train_fn(
                 X_tr_sc, y_tr, X_te_sc, y_te, inner_cv, **kwargs)
@@ -281,12 +291,25 @@ for mname in models:
         row += f'{sub[col].mean():.3f} +/- {sub[col].std():.3f}  '
     print(row)
 
+print(f'\n  (Excluding S14 — S14 is an outlier subject where tree models collapse)')
+print(f'{"Model":<12}' + ''.join(f'{m.upper():<{col_w}}' for m in metric_cols))
+print('-' * (12 + col_w * len(metric_cols)))
+no_s14 = results_df[results_df['subject_id'] != 'S14']
+for mname in models:
+    sub = no_s14[no_s14['model'] == mname]
+    row = f'{mname:<12}'
+    for col in metric_cols:
+        row += f'{sub[col].mean():.3f} +/- {sub[col].std():.3f}  '
+    print(row)
+
 print('\n' + '=' * 70)
 print('  PER-SUBJECT F1')
 print('=' * 70)
 pivot   = results_df.pivot(index='subject_id', columns='model', values='f1')[models]
+pivot_no_s14 = pivot.drop('S14', errors='ignore')
 display = pd.concat([pivot,
                      pivot.mean().rename('Mean').to_frame().T,
+                     pivot_no_s14.mean().rename('Mean (no S14)').to_frame().T,
                      pivot.std().rename('Std').to_frame().T])
 fw = 12
 print(f'{"Subject":<12}' + ''.join(f'{m:>{fw}}' for m in models))
@@ -337,6 +360,63 @@ print(f'SHAP bar chart saved -> {bar_path}')
 
 
 
+# LR COEFFICIENT PLOT
+coef_matrix = np.array(all_lr_coefs)       # (n_subjects, n_features)
+coef_mean   = coef_matrix.mean(axis=0)
+coef_std    = coef_matrix.std(axis=0)
+sort_idx_lr = np.argsort(np.abs(coef_mean))
+
+fig, ax = plt.subplots(figsize=(9, 7))
+y_pos = np.arange(len(feat_cols))
+ax.barh(y_pos, coef_mean[sort_idx_lr], xerr=coef_std[sort_idx_lr],
+        color=['tomato' if v > 0 else 'steelblue' for v in coef_mean[sort_idx_lr]],
+        alpha=0.85, capsize=3, edgecolor='white')
+ax.set_yticks(y_pos)
+ax.set_yticklabels([feat_cols[i] for i in sort_idx_lr], fontsize=9)
+ax.axvline(0, color='black', linewidth=0.8)
+ax.set_xlabel('LR Coefficient  (red = promotes stress, blue = suppresses)', fontsize=10)
+ax.set_title('Logistic Regression Feature Coefficients\n(mean ± std across LOSO folds)',
+             fontsize=12, fontweight='bold')
+plt.tight_layout()
+lr_coef_path = os.path.join(DATA_ROOT, 'lr_coefficients.png')
+plt.savefig(lr_coef_path, dpi=150, bbox_inches='tight')
+plt.close()
+print(f'LR coefficient plot saved -> {lr_coef_path}')
+
+# SIDE-BY-SIDE: LR coefficients vs XGBoost SHAP (features sorted by |LR coef|)
+feat_labels   = [feat_cols[i] for i in sort_idx_lr]
+shap_ordered  = mean_abs_shap[sort_idx_lr]
+lr_c_ordered  = coef_mean[sort_idx_lr]
+lr_s_ordered  = coef_std[sort_idx_lr]
+
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7))
+y_pos = np.arange(len(feat_cols))
+
+ax1.barh(y_pos, lr_c_ordered, xerr=lr_s_ordered,
+         color=['tomato' if v > 0 else 'steelblue' for v in lr_c_ordered],
+         alpha=0.85, capsize=3, edgecolor='white')
+ax1.set_yticks(y_pos)
+ax1.set_yticklabels(feat_labels, fontsize=8)
+ax1.axvline(0, color='black', linewidth=0.8)
+ax1.set_xlabel('LR Coefficient\n(red = promotes stress, blue = suppresses)', fontsize=9)
+ax1.set_title('Logistic Regression\nFeature Coefficients (mean ± std)', fontsize=11, fontweight='bold')
+
+ax2.barh(y_pos, shap_ordered, color='steelblue', alpha=0.85)
+ax2.set_yticks(y_pos)
+ax2.set_yticklabels(feat_labels, fontsize=8)
+ax2.set_xlabel('Mean |SHAP value|\n(impact on stress prediction)', fontsize=9)
+ax2.set_title('XGBoost\nGlobal Feature Importance (SHAP)', fontsize=11, fontweight='bold')
+
+fig.suptitle('Feature Importance: LR Coefficients vs XGBoost SHAP\n(features sorted by |LR coefficient|)',
+             fontsize=12, fontweight='bold')
+plt.tight_layout()
+comparison_path = os.path.join(DATA_ROOT, 'feature_importance_comparison.png')
+plt.savefig(comparison_path, dpi=150, bbox_inches='tight')
+plt.close()
+print(f'Feature importance comparison saved -> {comparison_path}')
+
+
+
 # CONFUSION MATRICES — aggregated across all LOSO folds
 y_true_all = pred_df['label'].astype(int).values
 cm_models  = [('LR', 'lr'), ('Random Forest', 'rf'), ('XGBoost', 'xgb')]
@@ -381,3 +461,94 @@ print(f'\nConfusion matrix figure saved -> {cm_path}')
 out_csv = os.path.join(DATA_ROOT, 'model_comparison_results.csv')
 results_df.to_csv(out_csv, index=False)
 print(f'\nModel comparison results saved -> {out_csv}')
+
+
+
+# ALL-MODEL COMPARISON (incorporates cnn1d_results.csv if available)
+cnn_csv = os.path.join(DATA_ROOT, 'cnn1d_results.csv')
+if not os.path.exists(cnn_csv):
+    print('\nNOTE: cnn1d_results.csv not found — run cnn1d_pipeline.py first '
+          'to include the 1D CNN in the comparison tables below.')
+else:
+    cnn_df = pd.read_csv(cnn_csv)
+    cnn_df.insert(0, 'model', '1D-CNN')
+
+    all_models_df = pd.concat(
+        [results_df[['model', 'subject_id'] + metric_cols],
+         cnn_df[['model', 'subject_id']    + metric_cols]],
+        ignore_index=True,
+    )
+    all_model_names = ['LR', 'RF', 'XGBoost', '1D-CNN']
+
+    print('\n' + '=' * 70)
+    print('  ALL MODELS — MEAN +/- STD (including 1D CNN)')
+    print('=' * 70)
+    col_w = 18
+    print(f'{"Model":<12}' + ''.join(f'{m.upper():<{col_w}}' for m in metric_cols))
+    print('-' * (12 + col_w * len(metric_cols)))
+    for mname in all_model_names:
+        sub = all_models_df[all_models_df['model'] == mname]
+        row = f'{mname:<12}'
+        for col in metric_cols:
+            row += f'{sub[col].mean():.3f} +/- {sub[col].std():.3f}  '
+        print(row)
+
+    print(f'\n  (Excluding S14)')
+    print(f'{"Model":<12}' + ''.join(f'{m.upper():<{col_w}}' for m in metric_cols))
+    print('-' * (12 + col_w * len(metric_cols)))
+    all_no_s14 = all_models_df[all_models_df['subject_id'] != 'S14']
+    for mname in all_model_names:
+        sub = all_no_s14[all_no_s14['model'] == mname]
+        row = f'{mname:<12}'
+        for col in metric_cols:
+            row += f'{sub[col].mean():.3f} +/- {sub[col].std():.3f}  '
+        print(row)
+
+    print('\n' + '=' * 70)
+    print('  ALL MODELS — PER-SUBJECT F1')
+    print('=' * 70)
+    pivot_all = all_models_df.pivot(
+        index='subject_id', columns='model', values='f1'
+    )[all_model_names]
+    pivot_all_no_s14 = pivot_all.drop('S14', errors='ignore')
+    summary = pd.concat([
+        pivot_all,
+        pivot_all.mean().rename('Mean').to_frame().T,
+        pivot_all_no_s14.mean().rename('Mean (no S14)').to_frame().T,
+        pivot_all.std().rename('Std').to_frame().T,
+    ])
+    fw = 12
+    print(f'{"Subject":<12}' + ''.join(f'{m:>{fw}}' for m in all_model_names))
+    print('-' * (12 + fw * len(all_model_names)))
+    for idx, row_vals in summary.iterrows():
+        print(f'{str(idx):<12}' + ''.join(f'{v:>{fw}.3f}' for v in row_vals))
+
+    # Save combined results
+    combined_csv = os.path.join(DATA_ROOT, 'all_models_results.csv')
+    all_models_df.to_csv(combined_csv, index=False)
+    print(f'\nCombined results saved -> {combined_csv}')
+
+    # Per-subject F1 bar chart — all 4 models
+    subjects_sorted = sorted(pivot_all.index)
+    x = np.arange(len(subjects_sorted))
+    width = 0.2
+    colors = ['steelblue', 'tomato', 'mediumseagreen', 'darkorange']
+
+    fig, ax = plt.subplots(figsize=(16, 6))
+    for i, (mname, color) in enumerate(zip(all_model_names, colors)):
+        vals = [pivot_all.loc[s, mname] for s in subjects_sorted]
+        ax.bar(x + i * width, vals, width, label=mname, color=color, alpha=0.85)
+
+    ax.set_xticks(x + width * 1.5)
+    ax.set_xticklabels(subjects_sorted, fontsize=9)
+    ax.set_ylabel('F1 Score (stress class)', fontsize=10)
+    ax.set_ylim(0, 1.05)
+    ax.axhline(0.5, color='gray', linestyle='--', linewidth=0.8, alpha=0.6)
+    ax.set_title('Per-Subject F1 Score — All Models (LOSO)',
+                 fontsize=12, fontweight='bold')
+    ax.legend(fontsize=10)
+    plt.tight_layout()
+    bar_chart_path = os.path.join(DATA_ROOT, 'all_models_f1_by_subject.png')
+    plt.savefig(bar_chart_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f'Per-subject F1 bar chart saved -> {bar_chart_path}')
