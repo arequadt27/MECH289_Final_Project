@@ -78,8 +78,6 @@ Trains a 1D convolutional neural network on raw multi-modal wrist signals (EDA, 
 
 ### Step 3 — Model comparison (LR, Random Forest, XGBoost)
 
-> Run this while the CNN is training. Re-run it once the CNN finishes to merge CNN results into the combined outputs.
-
 ```
 python model_comparison.py
 ```
