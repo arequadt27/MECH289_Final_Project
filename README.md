@@ -64,7 +64,6 @@ python cnn1d_pipeline.py
 
 Trains a 1D convolutional neural network on raw multi-modal wrist signals (EDA, BVP, TEMP, ACC magnitude) resampled to a common 64 Hz grid. Each window is 60 seconds × 4 channels. LOSO cross-validation with early stopping and class-weighted loss. Does not depend on `wesad_features.csv` — reads directly from the raw `.pkl` files.
 
-**Launch this and let it run in the background while Step 3 runs in a second terminal.**
 
 **Expected runtime: ~30–60 minutes (GPU recommended)**
 
