@@ -40,10 +40,10 @@ No path configuration is needed — all scripts locate the dataset automatically
 **Recommended order if running everything at once:**
 ```
 # Terminal 1 — start immediately, runs independently
-python cnn1d_pipeline.py
+python wesad_pipeline.py     # Step 1: feature extraction
+python cnn1d_pipeline.py     # Step 2: CNN (launch and walk away)
 
-# Terminal 2 — run sequentially while CNN trains
-python wesad_pipeline.py
+# Terminal 2 — run after Step 1 finishes, while CNN is still training
 python model_comparison.py
 python motion_stratification.py
 
@@ -73,8 +73,32 @@ Loads all 15 subjects (S2–S17, S12 absent), preprocesses wrist signals, and ex
 - TEMP × 3: mean, std, slope
 - ACC × 4: magnitude mean, std, max, energy
 
+---
 
-### Step 2 — Model comparison (LR, Random Forest, XGBoost)
+### Step 2 — 1D CNN
+
+```
+python cnn1d_pipeline.py
+```
+
+Trains a 1D convolutional neural network on raw multi-modal wrist signals (EDA, BVP, TEMP, ACC magnitude) resampled to a common 64 Hz grid. Each window is 60 seconds × 4 channels. LOSO cross-validation with early stopping and class-weighted loss. Does not depend on `wesad_features.csv` — reads directly from the raw `.pkl` files.
+
+**Launch this and let it run in the background while Step 3 runs in a second terminal.**
+
+**Expected runtime: ~30–60 minutes (GPU recommended)**
+
+**Outputs:**
+| File | Description |
+|---|---|
+| `cnn1d_results.csv` | Per-subject metrics for the 1D CNN |
+| `cnn1d_window_predictions.csv` | Per-window CNN predictions |
+| `cnn1d_confusion_matrix.png` | Aggregated confusion matrix |
+
+---
+
+### Step 3 — Model comparison (LR, Random Forest, XGBoost)
+
+> Run this while the CNN is training. Re-run it once the CNN finishes to merge CNN results into the combined outputs.
 
 ```
 python model_comparison.py
@@ -88,7 +112,7 @@ Runs LOSO cross-validation across all 15 subjects. LR uses inner 3-fold grid sea
 | File | Description |
 |---|---|
 | `model_comparison_results.csv` | Per-subject metrics for LR, RF, XGBoost |
-| `all_models_results.csv` | Combined per-subject metrics including 1D-CNN (requires Step 3) |
+| `all_models_results.csv` | Combined per-subject metrics including 1D-CNN (requires Step 2) |
 | `window_predictions.csv` | Per-window predictions (used by motion_stratification.py) |
 | `shap_beeswarm.png` | XGBoost SHAP feature effects across all folds |
 | `shap_bar.png` | XGBoost global feature importance (mean \|SHAP\|) |
@@ -97,27 +121,7 @@ Runs LOSO cross-validation across all 15 subjects. LR uses inner 3-fold grid sea
 | `confusion_matrices.png` | Aggregated confusion matrices for all three models |
 | `all_models_f1_by_subject.png` | Per-subject F1 bar chart for all four models |
 
-
-
-### Step 3 — 1D CNN
-
-> **Run this first** — see tip at the top of this section.
-
-```
-python cnn1d_pipeline.py
-```
-
-Trains a 1D convolutional neural network on raw multi-modal wrist signals (EDA, BVP, TEMP, ACC magnitude) resampled to a common 64 Hz grid. Each window is 60 seconds × 4 channels. LOSO cross-validation with early stopping and class-weighted loss. Does not depend on `wesad_features.csv` — reads directly from the raw `.pkl` files. Re-run `model_comparison.py` after this step to include the CNN in the combined comparison tables and bar chart.
-
-**Expected runtime: ~30–60 minutes (GPU recommended)**
-
-**Outputs:**
-| File | Description |
-|---|---|
-| `cnn1d_results.csv` | Per-subject metrics for the 1D CNN |
-| `cnn1d_window_predictions.csv` | Per-window CNN predictions |
-| `cnn1d_confusion_matrix.png` | Aggregated confusion matrix |
-
+---
 
 ### Step 4 — Motion artifact stratification
 
