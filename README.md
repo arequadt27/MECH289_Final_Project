@@ -2,39 +2,6 @@
 
 Stress classification using the WESAD dataset and Empatica E4 wrist wearable signals only (EDA, BVP, TEMP, ACC). Four models are compared — Logistic Regression, Random Forest, XGBoost, and a 1D CNN — using Leave-One-Subject-Out (LOSO) cross-validation across 15 subjects.
 
----
-
-## Results summary
-
-**Mean F1 score across all 15 subjects (LOSO):**
-
-| Model | F1 | Recall | Precision | PR-AUC | Note |
-|---|---|---|---|---|---|
-| LR | 0.839 | 0.892 | 0.818 | 0.927 | Most consistent across subjects |
-| XGBoost | 0.802 | 0.800 | 0.825 | 0.942 | Collapses on S14 |
-| RF | 0.780 | 0.752 | 0.847 | 0.946 | Collapses on S14 |
-| 1D-CNN | 0.533 | 0.518 | 0.640 | 0.817 | Fails on S9, S16, S17 |
-
-**Excluding S14** (an outlier subject where tree model probability calibration breaks down):
-
-| Model | F1 | Recall | Precision |
-|---|---|---|---|
-| XGBoost | **0.859** | 0.857 | 0.884 |
-| LR | 0.835 | 0.898 | 0.805 |
-| RF | 0.835 | 0.806 | 0.907 |
-| 1D-CNN | 0.532 | 0.523 | 0.638 |
-
-**Motion stratification** (LR / RF / XGBoost, per-subject median ACC threshold):
-
-| Stratum | LR F1 | RF F1 | XGBoost F1 |
-|---|---|---|---|
-| Low motion | 0.823 | 0.842 | 0.852 |
-| High motion | 0.854 | 0.797 | 0.814 |
-
-LR is uniquely stable across motion conditions; XGBoost is strongest in low-motion windows.
-
----
-
 ## Setup
 
 ### 1. Install dependencies
@@ -65,11 +32,26 @@ MECH289 FP/
 
 No path configuration is needed — all scripts locate the dataset automatically.
 
----
 
 ## Running the pipeline
 
-Run scripts **in this order**. Each step depends on outputs from the previous one.
+> **Tip — start the CNN first.** `cnn1d_pipeline.py` only requires the raw WESAD `.pkl` files and can run in parallel with Steps 1 and 2. Launch it before walking away (30–60 min), then run Steps 1 and 2 while it trains to minimise total wall time. Once the CNN finishes, re-run `model_comparison.py` to incorporate its results into the combined tables and bar chart.
+
+**Recommended order if running everything at once:**
+```
+# Terminal 1 — start immediately, runs independently
+python cnn1d_pipeline.py
+
+# Terminal 2 — run sequentially while CNN trains
+python wesad_pipeline.py
+python model_comparison.py
+python motion_stratification.py
+
+# After both terminals finish
+python model_comparison.py   # re-run to merge CNN results into combined outputs
+```
+
+---
 
 ### Step 1 — Feature extraction
 
@@ -91,7 +73,6 @@ Loads all 15 subjects (S2–S17, S12 absent), preprocesses wrist signals, and ex
 - TEMP × 3: mean, std, slope
 - ACC × 4: magnitude mean, std, max, energy
 
----
 
 ### Step 2 — Model comparison (LR, Random Forest, XGBoost)
 
@@ -116,15 +97,17 @@ Runs LOSO cross-validation across all 15 subjects. LR uses inner 3-fold grid sea
 | `confusion_matrices.png` | Aggregated confusion matrices for all three models |
 | `all_models_f1_by_subject.png` | Per-subject F1 bar chart for all four models |
 
----
+
 
 ### Step 3 — 1D CNN
+
+> **Run this first** — see tip at the top of this section.
 
 ```
 python cnn1d_pipeline.py
 ```
 
-Trains a 1D convolutional neural network on raw multi-modal wrist signals (EDA, BVP, TEMP, ACC magnitude) resampled to a common 64 Hz grid. Each window is 60 seconds × 4 channels. LOSO cross-validation with early stopping and class-weighted loss. Re-run `model_comparison.py` after this step to include the CNN in the combined comparison tables and bar chart.
+Trains a 1D convolutional neural network on raw multi-modal wrist signals (EDA, BVP, TEMP, ACC magnitude) resampled to a common 64 Hz grid. Each window is 60 seconds × 4 channels. LOSO cross-validation with early stopping and class-weighted loss. Does not depend on `wesad_features.csv` — reads directly from the raw `.pkl` files. Re-run `model_comparison.py` after this step to include the CNN in the combined comparison tables and bar chart.
 
 **Expected runtime: ~30–60 minutes (GPU recommended)**
 
@@ -135,7 +118,6 @@ Trains a 1D convolutional neural network on raw multi-modal wrist signals (EDA, 
 | `cnn1d_window_predictions.csv` | Per-window CNN predictions |
 | `cnn1d_confusion_matrix.png` | Aggregated confusion matrix |
 
----
 
 ### Step 4 — Motion artifact stratification
 
@@ -151,7 +133,6 @@ Loads `window_predictions.csv` and splits each subject's windows into low-motion
 | `motion_stratification_results.csv` | Metrics per model per stratum |
 | `motion_stratification.png` | Grouped bar chart comparing low vs. high motion |
 
----
 
 ## Label mapping
 
@@ -163,7 +144,6 @@ Loads `window_predictions.csv` and splits each subject's windows into low-motion
 | 4 | Meditation | excluded |
 | 0, 5, 6, 7 | Transitions / non-TSST | excluded |
 
----
 
 ## Key design decisions
 
