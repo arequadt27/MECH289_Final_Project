@@ -1,22 +1,9 @@
-#!/usr/bin/env python3
-"""
-wesad_pipeline.py
-─────────────────
-WESAD stress detection pipeline — Empatica E4 wrist data only.
-Signals: ACC (32 Hz) · BVP (64 Hz) · EDA (4 Hz) · TEMP (4 Hz)
-Chest sensor data is never loaded or accessed at any point.
-
-Usage:
-    Set DATA_ROOT and PLOT_SUBJECT below, then:
-        python wesad_pipeline.py
-"""
-
 import os
 import pickle
 import warnings
 
 import matplotlib
-matplotlib.use('Agg')          # non-interactive backend; must precede pyplot import
+matplotlib.use('Agg')         
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import numpy as np
@@ -27,13 +14,12 @@ from scipy.stats import linregress
 warnings.filterwarnings('ignore')
 
 
-# CONFIGURATION  ←  only these two lines need to change between runs
-DATA_ROOT    = os.path.dirname(os.path.abspath(__file__))  # project folder (contains WESAD/)
+DATA_ROOT    = os.path.dirname(os.path.abspath(__file__))  
 
 # Subjects S2–S17; S12 is absent from the dataset
 SUBJECTS = [f'S{i}' for i in range(2, 18) if i != 12]
 
-# Nominal sampling rates (Hz)
+# Sampling Rates
 FS = {
     'ACC':    32,
     'BVP':    64,
@@ -51,10 +37,6 @@ VALID_LABELS = frozenset({1, 2, 3})   # TSST-relevant labels; exclude 0 (undefin
 # 1. DATA LOADING
 
 def load_subject(subject_id: str) -> dict:
-    """
-    Load wrist-only signals and ground-truth labels for one WESAD subject.
-    raw['signal']['chest'] is deliberately never referenced.
-    """
     pkl_path = os.path.join(DATA_ROOT, 'WESAD', subject_id, f'{subject_id}.pkl')
     with open(pkl_path, 'rb') as fh:
         raw = pickle.load(fh, encoding='latin1')
@@ -103,12 +85,6 @@ def filter_eda(eda: np.ndarray, fs: float = 4.0) -> np.ndarray:
 
 
 def filter_bvp(bvp: np.ndarray, fs: float = 64.0) -> np.ndarray:
-    """
-    4th-order Butterworth BP 0.5–5 Hz (zero-phase).
-    60 Hz power-line notch is applied only when Nyquist > 60 Hz.
-    For BVP at 64 Hz the Nyquist is 32 Hz < 60 Hz, so the notch
-    is intentionally skipped — 60 Hz is not representable at this rate.
-    """
     b, a = _bp_coeffs(0.5, 5.0, fs, order=4)
     out  = filtfilt(b, a, bvp)
 
@@ -116,7 +92,6 @@ def filter_bvp(bvp: np.ndarray, fs: float = 64.0) -> np.ndarray:
         w0       = 60.0 / (fs / 2)
         b_n, a_n = iirnotch(w0, Q=30)
         out      = filtfilt(b_n, a_n, out)
-    # else: notch skipped — BVP Nyquist (32 Hz) < 60 Hz
 
     return out
 
@@ -151,16 +126,8 @@ def preprocess_subject(data: dict) -> dict:
 
 # 3. LABEL ALIGNMENT & BINARY REMAPPING
 
-def downsample_labels_majority(labels: np.ndarray,
-                                src_fs: int, tgt_fs: int) -> np.ndarray:
-    """
-    Downsample label signal from src_fs → tgt_fs via majority vote.
-    Works for non-integer decimation ratios (e.g. 700 Hz → 64 Hz).
+def downsample_labels_majority(labels: np.ndarray, src_fs: int, tgt_fs: int) -> np.ndarray:
 
-    Strategy: assign every source sample to its target time bin with
-    integer arithmetic, then iterate only over the (small) number of
-    unique bins — O(n_src + n_tgt) rather than O(n_src * n_tgt).
-    """
     n_src    = len(labels)
     n_tgt    = int(n_src * tgt_fs / src_fs)
 
@@ -226,13 +193,7 @@ def _shade_stress(ax, lbl: np.ndarray, fs: float) -> None:
         ax.axvspan(t0, t[-1], alpha=0.15, color='red', zorder=0)
 
 
-def plot_subject_signals(subject_id: str, proc: dict,
-                         aligned: dict, save_dir: str) -> None:
-    """
-    2×2 figure: raw (light gray) overlaid with filtered (colour) per modality.
-    Red shading marks stress windows (binary label == 1).
-    Saved as signal_comparison_<subject_id>.png in save_dir.
-    """
+def plot_subject_signals(subject_id: str, proc: dict, aligned: dict, save_dir: str) -> None:
     panels = [
         ('EDA',  'EDA_raw',  'EDA',  'cornflowerblue', 'EDA (µS)',          FS['EDA']),
         ('BVP',  'BVP_raw',  'BVP',  'tomato',          'BVP (a.u.)',         FS['BVP']),
@@ -277,27 +238,7 @@ def plot_subject_signals(subject_id: str, proc: dict,
 
 # 5. WINDOWING
 
-def make_windows(sig: np.ndarray, labels: np.ndarray,
-                 fs: int, window_sec: int = 60,
-                 overlap: float = 0.5,
-                 raw_labels: np.ndarray = None):
-    """
-    Slide a fixed-length window over sig and its aligned binary labels.
-
-    Only complete windows are kept (no zero-padding).
-    All windows belong to a single subject — cross-subject windows
-    are prevented by calling this function per-subject.
-    Window label = majority vote of per-sample labels within the window.
-
-    If raw_labels is provided, windows whose majority raw label is not in
-    VALID_LABELS are discarded (removes undefined/transition label-0 windows
-    and any non-TSST labels 5-7, aligning with the proposal's truncation intent).
-
-    Returns
-    -------
-    windows    : list[np.ndarray]  each of length window_sec * fs
-    win_labels : list[int]         majority-vote binary label per window
-    """
+def make_windows(sig: np.ndarray, labels: np.ndarray, fs: int, window_sec: int = 60, overlap: float = 0.5, raw_labels: np.ndarray = None):
     n_win  = int(window_sec * fs)
     n_step = int(n_win * (1.0 - overlap))
     windows, win_labels = [], []
@@ -320,10 +261,6 @@ def make_windows(sig: np.ndarray, labels: np.ndarray,
 # 6. FEATURE EXTRACTION
 
 def feat_eda(win: np.ndarray, fs: float) -> dict:
-    """
-    EDA features: mean, std, min, max, linear slope,
-    SCR peak count, mean SCR peak amplitude.
-    """
     t         = np.arange(len(win)) / fs
     slope, *_ = linregress(t, win)
     peaks, _  = find_peaks(win, prominence=0.01)
@@ -341,16 +278,6 @@ def feat_eda(win: np.ndarray, fs: float) -> dict:
 
 
 def feat_bvp(win: np.ndarray, fs: float) -> dict:
-    """
-    BVP features after ectopic-beat rejection.
-
-    Steps:
-      1. Detect systolic peaks (minimum 0.3 s apart, ≤ ~200 bpm).
-      2. Compute RR intervals (s).
-      3. Reject ectopic beats: remove RR intervals that deviate > 20 %
-         from the local (window-level) median.
-      4. Return signal mean/std and cleaned RR statistics.
-    """
     min_dist = max(1, int(0.3 * fs))
     peaks, _ = find_peaks(win, distance=min_dist, prominence=0.01)
 
@@ -387,11 +314,6 @@ def feat_temp(win: np.ndarray, fs: float) -> dict:
 
 
 def feat_acc(win: np.ndarray, fs: float) -> dict:
-    """
-    ACC magnitude features: mean, std, max, signal energy (sum of squares).
-    acc_magnitude_mean is preserved explicitly for motion-artifact
-    stratification analysis in downstream experiments.
-    """
     return {
         'acc_magnitude_mean':   float(np.mean(win)),    # retained for motion stratification
         'acc_magnitude_std':    float(np.std(win)),
@@ -408,19 +330,8 @@ _FEAT_FN = {
 }
 
 
-def extract_features(proc: dict, raw_aligned: dict,
-                     bin_aligned: dict, subject_id: str) -> pd.DataFrame:
-    """
-    Window each modality independently at its own sampling rate, extract
-    features, and assemble one feature row per window.
+def extract_features(proc: dict, raw_aligned: dict, bin_aligned: dict, subject_id: str) -> pd.DataFrame:
 
-    raw_aligned is used to filter windows dominated by non-TSST labels
-    (label 0 transitions, labels 5-7). bin_aligned provides the binary
-    stress label for each kept window.
-
-    Window counts may differ by +-1 across modalities due to rounding;
-    the minimum is used to keep all modalities time-aligned.
-    """
     MODS = [
         ('EDA',  FS['EDA']),
         ('BVP',  FS['BVP']),
