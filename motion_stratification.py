@@ -1,21 +1,4 @@
-#!/usr/bin/env python3
-"""
-motion_stratification.py
-─────────────────────────
-Loads window_predictions.csv (produced by model_comparison.py) and computes
-F1, recall, and precision for each model separately in low-motion and
-high-motion windows.
-
-Threshold: median of acc_magnitude_mean across all windows (data-driven,
-as specified in the project proposal §5).
-
-Outputs:
-  motion_stratification.png  —  grouped bar chart per metric
-  motion_stratification_results.csv
-"""
-
 import os
-
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -25,14 +8,12 @@ from sklearn.metrics import f1_score, precision_score, recall_score
 
 
 # CONFIGURATION
-DATA_ROOT = os.path.dirname(os.path.abspath(__file__))  # project folder
+DATA_ROOT = os.path.dirname(os.path.abspath(__file__))
 
 
 # LOAD PREDICTIONS
 pred_path = os.path.join(DATA_ROOT, 'window_predictions.csv')
 pred_df   = pd.read_csv(pred_path)
-
-# Drop any windows with missing predictions (shouldn't occur after a full run)
 pred_df = pred_df.dropna(subset=['lr_pred', 'rf_pred', 'xgb_pred'])
 
 
@@ -125,7 +106,7 @@ for ax, metric in zip(axes, METRIC_NAMES):
             ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.01,
                     f'{v:.2f}', ha='center', va='bottom', fontsize=7.5)
 
-    # Proposal target line
+    # Target line
     ax.axhline(0.80, color='gray', linestyle='--', linewidth=0.9, alpha=0.6,
                label='Target (0.80)')
     ax.set_title(metric.capitalize(), fontsize=12, fontweight='bold')
