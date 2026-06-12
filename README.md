@@ -32,25 +32,6 @@ MECH289 FP/
 
 No path configuration is needed — all scripts locate the dataset automatically.
 
-
-## Running the pipeline
-
-> **Tip — start the CNN first.** `cnn1d_pipeline.py` only requires the raw WESAD `.pkl` files and can run in parallel with Steps 1 and 2. Launch it before walking away (30–60 min), then run Steps 1 and 2 while it trains to minimise total wall time. Once the CNN finishes, re-run `model_comparison.py` to incorporate its results into the combined tables and bar chart.
-
-**Recommended order if running everything at once:**
-```
-# Terminal 1 — start immediately, runs independently
-python wesad_pipeline.py     # Step 1: feature extraction
-python cnn1d_pipeline.py     # Step 2: CNN (launch and walk away)
-
-# Terminal 2 — run after Step 1 finishes, while CNN is still training
-python model_comparison.py
-python motion_stratification.py
-
-# After both terminals finish
-python model_comparison.py   # re-run to merge CNN results into combined outputs
-```
-
 ---
 
 ### Step 1 — Feature extraction
