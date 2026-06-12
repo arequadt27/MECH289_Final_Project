@@ -1,22 +1,4 @@
 #!/usr/bin/env python3
-"""
-model_comparison.py
-────────────────────
-Compares Logistic Regression, Random Forest, and XGBoost for WESAD stress
-detection using LOSO cross-validation.
-
-Additionally:
-  - Saves per-window predictions to window_predictions.csv (used by
-    motion_stratification.py)
-  - Computes XGBoost SHAP values across all LOSO folds and saves
-    shap_beeswarm.png and shap_bar.png
-
-Install:
-    pip install scikit-learn xgboost optuna shap
-
-Expected runtime: ~60-90 min on a modern CPU (XGBoost uses 150 Optuna trials).
-"""
-
 import os
 import time
 import warnings
@@ -256,7 +238,7 @@ for fold_idx, (train_idx, test_idx) in enumerate(logo.split(X, y, groups), 1):
         records.append({'model': model_name, 'subject_id': sid,
                         **m, 'best_params': str(bp)})
 
-        # Store per-window predictions (indices map directly to df rows)
+        # Store per-window predictions
         col = MODEL_COL[model_name]
         pred_df.iloc[test_idx, pred_df.columns.get_loc(f'{col}_pred')] = y_pred_fold
         pred_df.iloc[test_idx, pred_df.columns.get_loc(f'{col}_prob')] = y_prob_fold
@@ -307,8 +289,7 @@ print('  PER-SUBJECT F1')
 print('=' * 70)
 pivot   = results_df.pivot(index='subject_id', columns='model', values='f1')[models]
 pivot_no_s14 = pivot.drop('S14', errors='ignore')
-display = pd.concat([pivot,
-                     pivot.mean().rename('Mean').to_frame().T,
+display = pd.concat([pivot, pivot.mean().rename('Mean').to_frame().T,
                      pivot_no_s14.mean().rename('Mean (no S14)').to_frame().T,
                      pivot.std().rename('Std').to_frame().T])
 fw = 12
@@ -326,7 +307,7 @@ shap_X_matrix = np.vstack(shap_X_list)
 n_shap_wins = shap_matrix.shape[0]
 print(f'\nGenerating SHAP plots ({n_shap_wins} test windows across all folds)...')
 
-# -- Beeswarm (summary) plot: direction and magnitude of each feature's effect --
+# Beeswarm plot: direction and magnitude of each feature's effect 
 shap.summary_plot(shap_matrix, shap_X_matrix,
                   feature_names=feat_cols,
                   max_display=len(feat_cols),
@@ -339,7 +320,7 @@ plt.savefig(beeswarm_path, dpi=150, bbox_inches='tight')
 plt.close()
 print(f'SHAP beeswarm plot saved -> {beeswarm_path}')
 
-# -- Bar chart: mean |SHAP| per feature (global importance ranking) --
+# Bar chart: mean |SHAP| per feature (global importance ranking) 
 mean_abs_shap = np.abs(shap_matrix).mean(axis=0)   
 sorted_idx    = np.argsort(mean_abs_shap)           
 
@@ -361,7 +342,7 @@ print(f'SHAP bar chart saved -> {bar_path}')
 
 
 # LR COEFFICIENT PLOT
-coef_matrix = np.array(all_lr_coefs)       # (n_subjects, n_features)
+coef_matrix = np.array(all_lr_coefs)      
 coef_mean   = coef_matrix.mean(axis=0)
 coef_std    = coef_matrix.std(axis=0)
 sort_idx_lr = np.argsort(np.abs(coef_mean))
@@ -544,8 +525,7 @@ else:
     ax.set_ylabel('F1 Score (stress class)', fontsize=10)
     ax.set_ylim(0, 1.05)
     ax.axhline(0.5, color='gray', linestyle='--', linewidth=0.8, alpha=0.6)
-    ax.set_title('Per-Subject F1 Score — All Models (LOSO)',
-                 fontsize=12, fontweight='bold')
+    ax.set_title('Per-Subject F1 Score — All Models (LOSO)', fontsize=12, fontweight='bold')
     ax.legend(fontsize=10)
     plt.tight_layout()
     bar_chart_path = os.path.join(DATA_ROOT, 'all_models_f1_by_subject.png')
